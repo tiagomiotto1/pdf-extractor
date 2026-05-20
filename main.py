@@ -16,14 +16,13 @@ def clean_table_row(row):
 
 def extract_tables_from_page(page):
     tables_text = ""
+    
+    # Só detecção padrão — sem fallback "text" que contamina tudo
     tables = page.extract_tables()
-    if not tables:
-        tables = page.extract_tables(table_settings={
-            "vertical_strategy": "text",
-            "horizontal_strategy": "text",
-            "snap_tolerance": 5,
-            "join_tolerance": 5,
-        })
+    
+    # Pega as bounding boxes das tabelas para remover do texto corrido
+    table_bboxes = [table.bbox for table in page.find_tables()] if tables else []
+
     for i, table in enumerate(tables):
         if not table:
             continue
@@ -35,7 +34,8 @@ def extract_tables_from_page(page):
         if rows_text:
             tables_text += f"\nTABELA_{page.page_number}_{i}:\n"
             tables_text += "\n".join(rows_text) + "\n"
-    return tables_text
+    
+    return tables_text, table_bboxes
 
 @app.post("/extract")
 async def extract_pdf(file: UploadFile = File(...)):
@@ -47,8 +47,22 @@ async def extract_pdf(file: UploadFile = File(...)):
     try:
         with pdfplumber.open(tmp_path) as pdf:
             for page in pdf.pages:
-                text = page.extract_text() or ""
-                tables_text = extract_tables_from_page(page)
+                tables_text, table_bboxes = extract_tables_from_page(page)
+
+                # Extrai texto excluindo as áreas de tabela (evita duplicar)
+                if table_bboxes:
+                    filtered_page = page
+                    for bbox in table_bboxes:
+                        filtered_page = filtered_page.filter(
+                            lambda obj, b=bbox: not (
+                                b[0] <= obj["x0"] <= b[2] and
+                                b[1] <= obj["top"] <= b[3]
+                            )
+                        )
+                    text = filtered_page.extract_text() or ""
+                else:
+                    text = page.extract_text() or ""
+
                 full_text += text + tables_text + "\n\n"
     finally:
         os.unlink(tmp_path)
@@ -58,8 +72,3 @@ async def extract_pdf(file: UploadFile = File(...)):
 @app.get("/health")
 def health():
     return {"status": "ok"}
-
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
