@@ -1,3 +1,11 @@
+from fastapi import FastAPI, UploadFile, File
+from fastapi.responses import JSONResponse
+import pdfplumber
+import tempfile
+import os
+
+app = FastAPI()  # ← estava faltando isso
+
 @app.post("/extract")
 async def extract_pdf(file: UploadFile = File(...)):
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
@@ -21,5 +29,8 @@ async def extract_pdf(file: UploadFile = File(...)):
     finally:
         os.unlink(tmp_path)
 
-    # Retorna 1 item só — igual ao Extract From Text File nativo
     return JSONResponse({"pageContent": full_text.strip()})
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
